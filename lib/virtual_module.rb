@@ -198,7 +198,7 @@ EOS
         command = "julia --depwarn=no -L #{@work_dir}/#{LIB_SCRIPT} #{@work_dir}/#{ENTRYPOINT_SCRIPT}"
       elsif is_installed?(:docker)
         File.write("#{@work_dir}/#{ENTRYPOINT_SCRIPT}", generate_entrypoint("/opt/", "/opt/#{OUTPUT_ARGS}", name, *args))
-        command = "docker run -v #{@work_dir}/:/opt/ remore/virtualmodule julia --depwarn=no -L /opt/virtualmodule-lib.jl /opt/virtualmodule-entrypoint.jl"
+        command = "docker run -v #{@work_dir}/:/opt/ remore/virtual_module julia --depwarn=no -L /opt/virtualmodule-lib.jl /opt/virtualmodule-entrypoint.jl"
       else
         raise Exception.new("Either julia or docker command is required to run virtual_module")
       end
