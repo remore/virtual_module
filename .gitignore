@@ -3,3 +3,7 @@
 Gemfile.lock
 example/perf.*
 .byebug_history
+doc/benchmark_word2vec/output
+doc/benchmark_word2vec/training_data
+doc/benchmark_word2vec/distance
+doc/benchmark_word2vec/word2vec*

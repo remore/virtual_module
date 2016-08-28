@@ -2,8 +2,6 @@ require '../../lib/virtual_module'
 require 'benchmark'
 require 'enumerable/statistics'
 
-at_exit{ `rbenv local 2.3.0` }
-
 order_of_computation = ARGV[0] || 1e8
 number_of_trials = ARGV[1].to_i || 30
 puts "staring benchmark...(order_of_computation=#{order_of_computation}, number_of_trials=#{number_of_trials})\n"
@@ -44,13 +42,11 @@ EOS
   number_of_trials.times do |i|
     puts "next trial: #{i+1}/#{number_of_trials}"
     Benchmark.bm 10 do |r|
-      `rbenv local 2.3.0`
       r.report "Ruby 2.3.0" do
         p `ruby #{tempdir}/perf.rb`
       end
-      `rbenv local jruby-9.1.2.0`
       r.report "JRuby 9.1.2.0" do
-        p `ruby #{tempdir}/perf.rb`
+        p `jruby #{tempdir}/perf.rb`
       end
       r.report "Python 2.7" do
         p `python #{tempdir}/perf.py`

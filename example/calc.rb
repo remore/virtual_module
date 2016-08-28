@@ -118,7 +118,7 @@ def calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index
     end
     if sentence_length == 0 then
   #puts "currently=%d" % original_text.size if debug_mode > 1
-  println "currently=%d" % original_text.size
+  #println "currently=%d" % original_text.size
   #exit if original_text.size < 845000
       skipped=0
       sen=[]
@@ -218,11 +218,11 @@ def calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index
           elsif f < -MAX_EXP then
             g = label * alpha
           else
-            println "[__denominator]=#{__denominator}, [middle]=#{(f+MAX_EXP)*__denominator}, [to_i]=#{((f+MAX_EXP)*__denominator).to_i}, [middle2]=#{exptable(((f+MAX_EXP)*__denominator).to_i)}, [final]=#{(label - exptable(((f+MAX_EXP)*__denominator).to_i))},  [g]=#{(label - exptable(((f+MAX_EXP)*__denominator).to_i)) * alpha}"
+            #println "[__denominator]=#{__denominator}, [middle]=#{(f+MAX_EXP)*__denominator}, [to_i]=#{((f+MAX_EXP)*__denominator).to_i}, [middle2]=#{exptable(((f+MAX_EXP)*__denominator).to_i)}, [final]=#{(label - exptable(((f+MAX_EXP)*__denominator).to_i))},  [g]=#{(label - exptable(((f+MAX_EXP)*__denominator).to_i)) * alpha}"
             g = (label - exptable(((f+MAX_EXP)*__denominator).to_i)) * alpha
           end
           #puts "sentence_position=#{sentence_position}, word=#{word} #{vocab[word][1]}, target=#{target} #{vocab[target][1]}, label=#{label}, f=#{f}, g=#{g}" if debug_mode > 1
-          println "sentence_position=#{sentence_position}, word=#{word} #{vocab[word][1]}, target=#{target} #{vocab[target][1]}, label=#{label}, f=#{f}, g=#{g}"
+          #println "sentence_position=#{sentence_position}, word=#{word} #{vocab[word][1]}, target=#{target} #{vocab[target][1]}, label=#{label}, f=#{f}, g=#{g}"
           neu1e=addop2(layer1_size, neu1e, 0, g, syn1neg, l2)
           #for c in 0..layer1_size-1 do
           #  neu1e[c] += g*syn1neg[c+l2]

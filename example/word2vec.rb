@@ -99,22 +99,21 @@ util = Util.new(1)
 syn0 = (0..vocab.size*layer1_size).map {|i| ((util.next_random & 0xFFFF).to_f / 65536 -0.5 ) / layer1_size }
 puts "vocab.size=#{vocab.size}, layer1_size=#{layer1_size}, watashi-ha-#{syn0.size}"
 
+vocab = vocab.map{|e|
+  e=[e.cn, e.word]
+}
 if defined?(VirtualModule)
   class FloatArray < Array
   end
-  vocab = vocab.map{|e|
-    e=[e.cn, e.word]
-  }
   syn0 = FloatArray.new(syn0)
   __cum_table = FloatArray.new(__cum_table)
   syn1neg = FloatArray.new(syn1neg)
 
   vm = VirtualModule.new(File.read(File.dirname(__FILE__)+"/calc.rb"))
-  p vm.virtual_module_eval("calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index_hash, vocab, syn0, syn1neg, negative, alpha, __cum_table, table_size, layer1_size, window)")
-
+  vm.virtual_module_eval("calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index_hash, vocab, syn0, syn1neg, negative, alpha, __cum_table, table_size, layer1_size, window)")
 else
-  require "./calc.rb"
-  calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index_hash, vocab)
+  require "#{File.dirname(__FILE__)}/calc.rb"
+  calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index_hash, vocab, syn0, syn1neg, negative, alpha, __cum_table, table_size, layer1_size, window)
 end
 
 out = sprintf("%d %d\n", vocab.size, layer1_size)
