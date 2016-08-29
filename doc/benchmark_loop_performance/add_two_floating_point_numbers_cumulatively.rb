@@ -17,19 +17,25 @@ def sample_loop(n)
 end
 
 EOS
-  File.write("#{tempdir}/perf.rb", ruby_source + "p sample_loop(2.5)")
-  File.write("#{tempdir}/perf_with_vm.rb", "p VirtualModule.new(File.read('#{tempdir}/perf.rb')).sample_loop(2.5)")
+  File.write("#{tempdir}/bench.rb", ruby_source + "p sample_loop(2.5)")
+  File.write("#{tempdir}/bench_with_virtual_module.rb", "p VirtualModule.new(File.read('#{tempdir}/bench.rb')).sample_loop(2.5)")
 
-  File.write("#{tempdir}/perf.py", <<EOS)
+  File.write("#{tempdir}/lib.pyx", <<EOS)
 def sample_loop(n):
   for i in range(1,int(#{order_of_computation})+1):
     n=i+n;
   return n
 
-print(sample_loop(2.5))
+EOS
+  File.write("#{tempdir}/bench.py", File.read("#{tempdir}/lib.pyx") + "print(sample_loop(2.5))")
+  File.write("#{tempdir}/bench_with_cython.py",<<EOS)
+import pyximport
+pyximport.install(inplace=True)
+import lib
+print(lib.sample_loop(2.5))
 EOS
 
-  File.write("#{tempdir}/perf.jl", <<EOS)
+  File.write("#{tempdir}/bench.jl", <<EOS)
 function sample_loop(n)
   for i in 1:#{order_of_computation}
     n = i+n
@@ -43,23 +49,22 @@ EOS
     puts "next trial: #{i+1}/#{number_of_trials}"
     Benchmark.bm 10 do |r|
       r.report "Ruby 2.3.0" do
-        p `ruby #{tempdir}/perf.rb`
+        p `ruby #{tempdir}/bench.rb`
       end
       r.report "JRuby 9.1.2.0" do
-        p `jruby #{tempdir}/perf.rb`
+        p `jruby #{tempdir}/bench.rb`
       end
-      r.report "Python 2.7" do
-        p `python #{tempdir}/perf.py`
-      end
-      r.report "Cython 0.24" do
-        p `cython #{tempdir}/perf.py`
+      r.report "virtual_module" do
+        p `ruby -r virtual_module #{tempdir}/bench_with_virtual_module.rb`
       end
       r.report "Julia 0.4.6" do
-        p `julia #{tempdir}/perf.jl`
+        p `julia #{tempdir}/bench.jl`
       end
-      `rbenv local 2.3.0`
-      r.report "virtual_module" do
-        p `ruby -r virtual_module #{tempdir}/perf_with_vm.rb`
+      r.report "Python 2.7" do
+        p `python #{tempdir}/bench.py`
+      end
+      r.report "Cython 0.24" do
+        p `python #{tempdir}/bench_with_cython.py`
       end
     end.each do |e|
       score[e.label] = [] if score[e.label].nil?
