@@ -18,6 +18,8 @@ The other example here is a [prototype word2vec implementation in Ruby](https://
 
 ![Benchmarking results](https://raw.githubusercontent.com/remore/virtual_module/master/doc/assets/benchmark-result-of-word2vec-performance.png "Graphs of average execution time vs filesize of training data(Ubuntu16)")
 
+(Since Benchmarking is still on going, a few score values are still 0 but it's not a bug. I will update the graph once I get correct value for this.)
+
 Of course the vector binary file format generated through VirtualModule is compatible with original C implementation:
 
 ```
@@ -33,7 +35,7 @@ Type "help", "copyright", "credits" or "license" for more information.
 [(u'netherlands', 0.9741939902305603), (u'china', 0.9712631702423096), (u'county', 0.9686408042907715), (u'spaniards', 0.9669440388679504), (u'vienna', 0.9614173769950867), (u'abu', 0.9587018489837646), (u'korea', 0.9565504789352417), (u'canberra', 0.954473614692688), (u'erupts', 0.9540712833404541), (u'prefecture', 0.9534248113632202)]
 ```
 
-## Usage and How it works(TBD)
+## Usage and How It Works
 
 To write Ruby code using VirtualModule is something like to write Python code using Cython. Basic concept is to separate large-scale computation algorithm, and isolate them as a module accessible from the base program. Like Cython, VirtualModule is NOT comprehensive approach too but gives you an opportunity to reduce execution time in exchange for [the hard limitation of Ruby syntax due to ruby2julia transipiler](https://github.com/remore/julializer#supported-classes-and-syntax).
 
