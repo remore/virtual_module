@@ -18,9 +18,9 @@ The other example here is a [prototype word2vec implementation in Ruby](https://
 
 ![Benchmarking results](https://raw.githubusercontent.com/remore/virtual_module/master/doc/assets/benchmark-result-of-word2vec-performance.png "Graphs of average execution time vs filesize of training data(Ubuntu16)")
 
-(Since Benchmarking is still on going, a few score values are still 0 but it's not a bug. I will update the graph once I get correct value for this.)
+(A few record values resulted in 0 because it took too much time, actually more than three days to complete due to exponential explosion happened.)
 
-Of course the vector binary file format generated through VirtualModule is compatible with original C implementation:
+Of course the vector binary file format generated through VirtualModule is compatible with original C implementation. Here is [sample generated vector files](https://github.com/remore/remore.github.com/tree/master/virtual_module/sample_output) saved onto GitHUb, and command logs are as shown below:
 
 ```
 $ cd example
