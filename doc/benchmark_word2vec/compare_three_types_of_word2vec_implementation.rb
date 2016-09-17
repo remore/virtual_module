@@ -18,7 +18,7 @@ w2v_config = {
   :iter => 3,
   :debug => 0
 }
-cnofig_string = ->(hyphen){
+config_string = ->(hyphen){
   w2v_config.select{|k,v|k!=:timestamp}.map{|k,v| "#{hyphen}#{k} #{v}" }.join(" ")
 }
 filename = ->(impl){
@@ -32,16 +32,16 @@ number_of_trials.times do |i|
   puts "next trial: #{i+1}/#{number_of_trials}"
   Benchmark.bm 10 do |r|
     r.report "word2vec.c" do
-      p "./word2vec -cbow 1 -hs 0 -threads 1 -output #{filename.call("original")} #{cnofig_string.call("-")}"
-      `./word2vec -cbow 1 -hs 0 -threads 1 -output #{filename.call("original")} #{cnofig_string.call("-")}`
+      p "./word2vec -cbow 1 -hs 0 -threads 1 -output #{filename.call("original")} #{config_string.call("-")}"
+      `./word2vec -cbow 1 -hs 0 -threads 1 -output #{filename.call("original")} #{config_string.call("-")}`
     end
     r.report "word2vec.rb with vm" do
-      p "ruby -r virtual_module ../../example/word2vec.rb --output #{filename.call("vm")} #{cnofig_string.call("--")}"
-      `ruby -r virtual_module ../../example/word2vec.rb --output #{filename.call('"vm"')} #{cnofig_string.call("--")}`
+      p "ruby -r virtual_module ../../example/word2vec.rb --output #{filename.call("vm")} #{config_string.call("--")}"
+      `ruby -r virtual_module ../../example/word2vec.rb --output #{filename.call('"vm"')} #{config_string.call("--")}`
     end
     r.report "word2vec.rb" do
-      p "ruby ../../example/word2vec.rb --output #{filename.call("ruby")} #{cnofig_string.call("--")}"
-      `ruby ../../example/word2vec.rb --output #{filename.call("ruby")} #{cnofig_string.call("--")}`
+      p "ruby ../../example/word2vec.rb --output #{filename.call("ruby")} #{config_string.call("--")}"
+      `ruby ../../example/word2vec.rb --output #{filename.call("ruby")} #{config_string.call("--")}`
     end
   end.each do |e|
     score[e.label] = [] if score[e.label].nil?
