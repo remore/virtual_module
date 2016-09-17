@@ -11,32 +11,51 @@ module VirtualModule
 
   class << self
     def new(methods, config={})
-      if !config.is_a?(BaseBuilder)
-        config[:lang] = :julia if config[:lang].nil?
-        vm_builder = instance_eval("#{config[:lang].to_s.capitalize}Builder").new(config)
-      else
-        vm_builder = config
-      end
+      props = {:lang=>:julia, :pkgs=>[]}.merge(config)
+      vm_builder = instance_eval("#{props[:lang].to_s.capitalize}Builder").new(props)
       vm_builder.add(methods)
       vm_builder.build
     end
   end
 
-  class BaseBuilder
-    def initialize(config={})
-      @source = []
-      if !config.is_a?(BaseIpcInterface)
-        props = {:ipc=>:file, :work_dir=>nil}
-        props.each do |k,v|
-          instance_variable_set("@#{k}", config[k] || v)
+  module SexpParser
+    def extract_defs(s)
+      if s.instance_of?(Array) && s[0].instance_of?(Symbol) then
+        if [:def].include?(s[0])
+          "#{s[1][1]},"
+        else
+          s.map{|e| extract_defs(e)}.join
         end
-        @ipc = instance_eval("#{@ipc.to_s.capitalize}IpcInterface").new(props.merge(config))
-      else
-        @ipc = config
+      elsif s.instance_of?(Array) && s[0].instance_of?(Array) then
+        s.map{|e| extract_defs(e)}.join
       end
     end
 
-    def add(methods)
+    def extract_args(s)
+      if s.instance_of?(Array) && s[0].instance_of?(Symbol) then
+        if [:vcall, :var_field].include?(s[0])
+          "#{s[1][1]},"
+        else
+          s.map{|e| extract_args(e)}.join
+        end
+      elsif s.instance_of?(Array) && s[0].instance_of?(Array) then
+        s.map{|e| extract_args(e)}.join
+      end
+    end
+  end
+
+  class BaseBuilder
+    include SexpParser
+
+    def initialize(config={})
+      props = {:ipc=>:file, :work_dir=>nil, :pkgs=>[], :source=>[]}
+      props.each do |k,v|
+        instance_variable_set("@#{k}", config[k] || v)
+      end
+      @ipc = instance_eval("#{@ipc.to_s.capitalize}IpcInterface").new(props.merge(config))
+    end
+
+    def add(methods="")
       @source << methods
       @ipc.reset get_compiled_code
     end
@@ -44,7 +63,7 @@ module VirtualModule
     def build
       vm_builder = self
       ipc = @ipc
-      vm = Module.new{
+      @vm = Module.new{
         @vm_builder = vm_builder
         @ipc = ipc
         def self.virtual_module_eval(*args)
@@ -53,49 +72,31 @@ module VirtualModule
         def self.method_missing(key, *args, &block)
           @vm_builder.send(:call, key, *args)
         end
+        def self.___get_serialized___
+          @ipc.serialized
+        end
       }
       extract_defs(Ripper.sexp(@source.join(";"))).split(",").each{|e|
-        vm.class_eval {
+        @vm.class_eval {
           define_method e.to_sym, Proc.new { |*args|
             vm_builder.call(e.to_sym, *args)
           }
         }
       }
-      vm
+      @vm
     end
 
     def call(name, *args)
-      Dir.mktmpdir(nil, Dir.home) do |tempdir|
-        @work_dir = @ipc.work_dir = tempdir
+      @work_dir = @ipc.work_dir
+      begin
         @ipc.call(name, *args)
+      rescue StandardError => e
+        @ipc.serialized = e.message
+        @vm
       end
     end
 
     private
-      def extract_defs(s)
-        if s.instance_of?(Array) && s[0].instance_of?(Symbol) then
-          if [:def].include?(s[0])
-            "#{s[1][1]},"
-          else
-            s.map{|e| extract_defs(e)}.join
-          end
-        elsif s.instance_of?(Array) && s[0].instance_of?(Array) then
-          s.map{|e| extract_defs(e)}.join
-        end
-      end
-
-      def extract_args(s)
-        if s.instance_of?(Array) && s[0].instance_of?(Symbol) then
-          if [:vcall, :var_field].include?(s[0])
-            "#{s[1][1]},"
-          else
-            s.map{|e| extract_args(e)}.join
-          end
-        elsif s.instance_of?(Array) && s[0].instance_of?(Array) then
-          s.map{|e| extract_args(e)}.join
-        end
-      end
-
       def inspect_local_vars(context, script)
         vars = extract_args(Ripper.sexp(script)).split(",").uniq.map{|e| e.to_sym} & context.eval("local_variables")
         #p "vars=#{vars}"
@@ -115,6 +116,9 @@ EOS
       end
   end
 
+  class JRubyBuilder < BaseBuilder
+
+  end
 
   class JuliaBuilder < BaseBuilder
     def virtual_module_eval(script, auto_binding=true)
@@ -135,20 +139,13 @@ EOS
   function ___main(params, type_info)
     #{vars.map{|e| e.to_s + '=___convert_type("'+e.to_s+'","'+(type_info[:params][e]||"")+'", params)'}.join(";")}
     ##{vars.map{|e| 'println("'+e.to_s+'=", typeof('+e.to_s+'))' }.join(";")}
-    ___evaluated = #{Julializer.ruby2julia(script)}
+    ___evaluated = (#{Julializer.ruby2julia(script)})
 
     #{vars.map{|e| 'params["'+e.to_s+'"]='+e.to_s }.join(";") if auto_binding}
 
     (___evaluated,#{auto_binding ? "params" : "-1" })
   end
 EOS
-
-#      File.write("#{@work_dir}.polykit.rb", <<EOS)
-#  require 'msgpack-rpc'
-#  client = MessagePack::RPC::Client.new('127.0.0.1', #{@port})
-#  client.timeout = #{@timeout}
-#  p client.call(:___main, #{params}, #{type_info})
-#EOS
 
       @ipc.reset get_compiled_code + ";#{boot_script}"
       evaluated = self.call(:___main, params, type_info)
@@ -164,21 +161,23 @@ EOS
 
     private
       def get_compiled_code
-        File.read(File.dirname(__FILE__)+"/virtual_module/bridge.jl") + ";" + Julializer.ruby2julia(@source.join(";\n"))
+        File.read(
+          File.dirname(__FILE__)+"/virtual_module/bridge.jl") + ";" +
+          Julializer.ruby2julia(@source.join(";\n")
+        )
       end
 
   end
 
   class BaseIpcInterface
-    INPUT_ARGS = "virtualmodule-input.msgpack"
-    OUTPUT_ARGS = "virtualmodule-output.msgpack"
-    ENTRYPOINT_SCRIPT = "virtualmodule-entrypoint.jl"
-    LIB_SCRIPT = "virtualmodule-lib.jl"
+    LIB_SCRIPT = "vm-lib"
 
     attr_accessor :work_dir
+    attr_accessor :serialized
 
-    def initialize(config)
-      #do nothing
+    def initialize(config={})
+      @work_dir = Dir.mktmpdir(nil, Dir.home)
+      at_exit{ FileUtils.remove_entry_secure @work_dir }
     end
     def call(name, *args)
       #do nothing
@@ -189,62 +188,90 @@ EOS
   end
 
   class FileIpcInterface < BaseIpcInterface
-    def call(name, *args)
-      File.write("#{@work_dir}/#{LIB_SCRIPT}", @lib_source)
-      File.write("#{@work_dir}/#{INPUT_ARGS}", MessagePack.pack(args))
+    INPUT = "vm-input"
+    OUTPUT = "vm-output"
+    MAIN_LOOP = "vm-main"
 
-      if is_installed?(:julia)
-        File.write("#{@work_dir}/#{ENTRYPOINT_SCRIPT}", generate_entrypoint(@work_dir, "#{@work_dir}/#{OUTPUT_ARGS}", name, *args))
-        command = "julia --depwarn=no -L #{@work_dir}/#{LIB_SCRIPT} #{@work_dir}/#{ENTRYPOINT_SCRIPT}"
-      elsif is_installed?(:docker)
-        File.write("#{@work_dir}/#{ENTRYPOINT_SCRIPT}", generate_entrypoint("/opt/", "/opt/#{OUTPUT_ARGS}", name, *args))
-        command = "docker run -v #{@work_dir}/:/opt/ remore/virtual_module julia --depwarn=no -L /opt/virtualmodule-lib.jl /opt/virtualmodule-entrypoint.jl"
+    def initialize(config={})
+      super
+      File.mkfifo("#{@work_dir}/#{INPUT}")
+      File.mkfifo("#{@work_dir}/#{OUTPUT}")
+      at_exit { Proc.new{Process.kill(:TERM, @pid) if !@pid.nil?} }
+    end
+
+    def call(name, *args)
+      #require 'byebug'
+      #byebug
+      if Helper.is_installed?(:julia)
+        File.write("#{@work_dir}/#{INPUT}", generate_entrypoint(@work_dir, "#{@work_dir}/#{OUTPUT}", name, *args))
+      elsif Helper.is_installed?(:docker)
+        File.write("#{@work_dir}/#{INPUT}", generate_entrypoint("/opt/", "/opt/#{OUTPUT}", name, *args))
       else
         raise Exception.new("Either julia or docker command is required to run virtual_module")
       end
-      out, err, status = Open3.capture3(command)
       #byebug
-      # FIXME: Only For Debug
-      # printf out, err
-      MessagePack.unpack(File.read("#{@work_dir}/#{OUTPUT_ARGS}"))
+      response = File.open("#{@work_dir}/#{OUTPUT}", 'r'){|f| f.read}
+      begin
+        MessagePack.unpack(response)
+      rescue
+        raise StandardError.new(response)
+      end
     end
 
     def reset(source)
       @lib_source = source
+      restart_server_process
     end
 
     private
-      def is_installed?(command)
-        Open3.capture3("which #{command.to_s}")[0].size > 0
+      def restart_server_process
+        Process.kill(:KILL, @pid) if !@pid.nil?
+        File.write("#{@work_dir}/#{LIB_SCRIPT}", @lib_source)
+        File.write("#{@work_dir}/#{MAIN_LOOP}", <<EOS)
+using MsgPack
+while true
+  source = open( "#{@work_dir}/#{INPUT}", "r" ) do fp
+    readall(fp)
+  end
+  result = eval(parse(source))
+  open( "#{@work_dir}/#{OUTPUT}", "w" ) do fp
+    try
+      write(fp,pack(result))
+    catch
+      serialize(fp,result)
+    end
+  end
+end
+EOS
+
+        if Helper.is_installed?(:julia)
+          command = "julia --depwarn=no -L #{@work_dir}/#{LIB_SCRIPT} #{@work_dir}/#{MAIN_LOOP}"
+        elsif Helper.is_installed?(:docker)
+          command = "docker run -v #{@work_dir}/:/opt/ remore/virtual_module julia --depwarn=no -L /opt/#{LIB_SCRIPT} /opt/#{MAIN_LOOP}"
+        else
+          raise Exception.new("Either julia or docker command is required to run virtual_module")
+        end
+        @pid = Process.spawn(command, :err => :out,:out => "/dev/null")
       end
 
       def generate_entrypoint(basedir, target, name, *args)
-        if args.count>0
-          script =<<EOS
-using MsgPack
-params = open( "#{basedir}/#{INPUT_ARGS}", "r" ) do fp
-  readall( fp )
-end
-result = #{name}(unpack(params)...)
-EOS
-        else
-          script =<<EOS
-using MsgPack
-result = #{name}()
-EOS
+        script = ""
+        params = []
+        args.each_with_index do |arg, i|
+          type = arg.class == Module ? "serialized" : "msgpack"
+          File.write("#{basedir}/#{INPUT}.#{i}.#{type}", arg.class == Module ? arg.___get_serialized___ : MessagePack.pack(arg))
+          params << "params_#{i}"
+          val = arg.class == Module ? "deserialize(fp)" : "unpack(readall(fp))"
+          script += "#{params.last} =open( \"#{basedir}/#{INPUT}.#{i}.#{type}\", \"r\" ) do fp; #{val}; end;"
         end
-
-        script + ";" + <<EOS
-open( "#{target}", "w" ) do fp
-  write( fp, pack(result) )
-end
-EOS
+        script += "#{name}(#{params.join(',')});"
+        #script + "open( \"#{target}\", \"w\" ) do fp; write( fp, try pack(result) catch; serialize(fp,result) end ); end"
       end
-
   end
 
   class RpcIpcInterface < BaseIpcInterface
     def initialize(config={})
+      super
       init_connection
       props = {:server=>"127.0.0.1", :port=>8746, :timeout=>10}
       props.each do |k,v|
@@ -271,10 +298,16 @@ EOS
         @pid = nil
         @client.close if !@client.nil?
         @client = nil
+        at_exit do
+          Proc.new do
+            @client.close if !@client.nil?
+            Process.kill(:TERM, @pid) if !@pid.nil?
+          end
+        end
       end
 
       def restart_server_process(source)
-        Process.kill(:TERM, @pid) if !@pid.nil?
+        Process.kill(:KILL, @pid) if !@pid.nil?
         `lsof -wni tcp:#{@port} | cut -f 4 -d ' ' | sed -ne '2,$p' | xargs kill -9`
         init_connection
         compiled = <<EOS
@@ -287,11 +320,14 @@ EOS
         File.write("#{@work_dir}/#{LIB_SCRIPT}", compiled)
         @pid = Process.spawn("julia --depwarn=no #{@work_dir}/#{LIB_SCRIPT}")
       end
+  end
 
-      at_exit do
-        @client.close if !@client.nil?
-        Process.kill(:TERM, @pid) if !@pid.nil?
+  module Helper
+    class << self
+      def is_installed?(command)
+        Open3.capture3("which #{command.to_s}")[0].size > 0
       end
+    end
   end
 
 end

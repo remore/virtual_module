@@ -1,3 +1,6 @@
+import Base.+
+import Base.*
+
 function +(x::ASCIIString, y::ASCIIString)
   string(x, y)
 end
