@@ -30,7 +30,7 @@ EOS
 p my_objects #[23, 9191, 67.03]
 p count_num #693889
 
-vm2 = VirtualModule.new(<<EOS, {:ipc=>:rpc})
+vm2 = VirtualModule.new(<<EOS, :ipc=>:rpc)
 def hey(x, y)
   "yo" + (x*y).to_s
 end

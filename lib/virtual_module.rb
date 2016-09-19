@@ -10,9 +10,9 @@ module VirtualModule
   require 'virtual_module/version'
 
   class << self
-    def new(methods, config={})
-      props = {:lang=>:julia, :pkgs=>[]}.merge(config)
-      vm_builder = instance_eval("#{props[:lang].to_s.capitalize}Builder").new(props)
+    def new(methods, **args)
+      option = {:lang=>:julia, :pkgs=>[], :ipc=>:file}.merge(args)
+      vm_builder = Builder.new(option[:lang], option[:pkgs], option[:ipc])
       vm_builder.add(methods)
       vm_builder.build
     end
@@ -44,20 +44,18 @@ module VirtualModule
     end
   end
 
-  class BaseBuilder
+  class Builder
     include SexpParser
 
-    def initialize(config={})
-      props = {:ipc=>:file, :work_dir=>nil, :pkgs=>[], :source=>[]}
-      props.each do |k,v|
-        instance_variable_set("@#{k}", config[k] || v)
-      end
-      @ipc = instance_eval("#{@ipc.to_s.capitalize}IpcInterface").new(props.merge(config))
+    def initialize(lang=:julia, pkgs=[], ipc=:file)
+      @provider = instance_eval("#{lang.capitalize}SourceProvider").new(pkgs)
+      @ipc = instance_eval("#{ipc.to_s.capitalize}IpcInterface").new(@provider)
     end
 
     def add(methods="")
-      @source << methods
-      @ipc.reset get_compiled_code
+      @provider.source << methods
+      @provider.compile
+      @ipc.reset @provider
     end
 
     def build
@@ -76,7 +74,7 @@ module VirtualModule
           @ipc.serialized
         end
       }
-      extract_defs(Ripper.sexp(@source.join(";"))).split(",").each{|e|
+      extract_defs(Ripper.sexp(@provider.source.join(";"))).split(",").each{|e|
         @vm.class_eval {
           define_method e.to_sym, Proc.new { |*args|
             vm_builder.call(e.to_sym, *args)
@@ -87,7 +85,6 @@ module VirtualModule
     end
 
     def call(name, *args)
-      @work_dir = @ipc.work_dir
       begin
         @ipc.call(name, *args)
       rescue StandardError => e
@@ -96,14 +93,27 @@ module VirtualModule
       end
     end
 
+    def virtual_module_eval(script, auto_binding=true)
+      vars, type_info, params = inspect_local_vars(binding.of_caller(2), script)
+      @provider.compile(vars, type_info, params, script, auto_binding)
+      @ipc.reset @provider
+      evaluated = self.call(:___main, params, type_info)
+      if auto_binding
+        binding.of_caller(2).eval(evaluated[1].map{|k,v| "#{k}=#{v};" if !v.nil? }.join)
+      end
+
+      return evaluated[0]
+    end
+
+    alias_method :virtual_instance_eval, :virtual_module_eval
+    alias_method :virtual_eval, :virtual_module_eval
+
     private
       def inspect_local_vars(context, script)
         vars = extract_args(Ripper.sexp(script)).split(",").uniq.map{|e| e.to_sym} & context.eval("local_variables")
-        #p "vars=#{vars}"
 
         type_info = {}
         type_info[:params] = context.eval("Hash[ *#{vars}.collect { |e| [ e, eval(e.to_s).class.to_s ] }.flatten ]").select{|k,v| ["FloatArray", "IntArray"].include?(v)}
-        #p "type_info=#{type_info}"
 
         params = context.eval(<<EOS)
 require 'msgpack'
@@ -111,19 +121,67 @@ ___params = {}
 ___params = local_variables.map{|e| [e, eval(e.to_s)]}.each{|e| ___params[e[0]]=e[1] if #{vars}.include?(e[0])}[0][1]
 ___params
 EOS
-        #File.write("#{@work_dir}.polykit.params", params)
         [vars, type_info, params]
       end
   end
 
-  class JRubyBuilder < BaseBuilder
+  class BaseSourceProvider
+    attr_accessor :source
+    def initialize(pkgs)
+      @source = load_packages(pkgs)
+      @compiled_lib = ""
+    end
 
+    def load_packages(pkgs)
+      [] #to be overrieded
+    end
   end
 
-  class JuliaBuilder < BaseBuilder
-    def virtual_module_eval(script, auto_binding=true)
-      vars, type_info, params = inspect_local_vars(binding.of_caller(2), script)
-      boot_script = <<EOS
+  class JuliaSourceProvider < BaseSourceProvider
+    def load_packages(pkgs)
+      pkgs.map{|e| "import #{e}"}
+    end
+
+    def main_loop(input_queue_path, output_queue_path)
+      <<EOS
+using MsgPack
+while true
+  source = open( "#{input_queue_path}", "r" ) do fp
+    readall(fp)
+  end
+  result = eval(parse(source))
+  open( "#{output_queue_path}", "w" ) do fp
+    try
+      write(fp,pack(result))
+    catch
+      serialize(fp,result)
+    end
+  end
+end
+EOS
+    end
+
+    def lib_script(ipc=nil)
+      if ipc!=:rpc
+        @compiled_lib
+      else
+        <<EOS
+import MsgPackRpcServer
+module RemoteFunctions
+#{@compiled_lib}
+end
+MsgPackRpcServer.run(parse(ARGS[1]), RemoteFunctions)
+EOS
+      end
+    end
+
+    def compile(vars=nil, type_info=nil, params=nil, script=nil, auto_binding=nil)
+      @compiled_lib = File.read(
+        File.dirname(__FILE__)+"/virtual_module/bridge.jl") + ";" +
+        Julializer.ruby2julia(@source.join(";\n")
+      )
+      if !vars.nil? && !type_info.nil? && !params.nil? && !script.nil? && !auto_binding.nil?
+        @compiled_lib += <<EOS
   function ___convert_type(name, typename, params)
     if length(findin(#{type_info[:params].keys.map{|e| e.to_s}},[name]))>0
       if typename=="FloatArray"
@@ -146,26 +204,21 @@ EOS
     (___evaluated,#{auto_binding ? "params" : "-1" })
   end
 EOS
-
-      @ipc.reset get_compiled_code + ";#{boot_script}"
-      evaluated = self.call(:___main, params, type_info)
-      if auto_binding
-        binding.of_caller(2).eval(evaluated[1].map{|k,v| "#{k}=#{v};" if !v.nil? }.join)
       end
-
-      return evaluated[0]
     end
 
-    alias_method :virtual_instance_eval, :virtual_module_eval
-    alias_method :virtual_eval, :virtual_module_eval
-
-    private
-      def get_compiled_code
-        File.read(
-          File.dirname(__FILE__)+"/virtual_module/bridge.jl") + ";" +
-          Julializer.ruby2julia(@source.join(";\n")
-        )
+    def generate_message(input_queue_path, name, *args)
+      script = ""
+      params = []
+      args.each_with_index do |arg, i|
+        type = arg.class == Module ? "serialized" : "msgpack"
+        File.write("#{input_queue_path}.#{i}.#{type}", arg.class == Module ? arg.___get_serialized___ : MessagePack.pack(arg))
+        params << "params_#{i}"
+        val = arg.class == Module ? "deserialize(fp)" : "unpack(readall(fp))"
+        script += "#{params.last} =open( \"#{input_queue_path}.#{i}.#{type}\", \"r\" ) do fp; #{val}; end;"
       end
+      script += "#{name}(#{params.join(',')});"
+    end
 
   end
 
@@ -175,15 +228,15 @@ EOS
     attr_accessor :work_dir
     attr_accessor :serialized
 
-    def initialize(config={})
+    def initialize(provider)
+      @provider = provider
       @work_dir = Dir.mktmpdir(nil, Dir.home)
-      at_exit{ FileUtils.remove_entry_secure @work_dir }
     end
     def call(name, *args)
       #do nothing
     end
-    def reset(source)
-      #do nothing
+    def reset(provider)
+      @provider = provider
     end
   end
 
@@ -192,25 +245,28 @@ EOS
     OUTPUT = "vm-output"
     MAIN_LOOP = "vm-main"
 
-    def initialize(config={})
+    def initialize(provider)
       super
       File.mkfifo("#{@work_dir}/#{INPUT}")
       File.mkfifo("#{@work_dir}/#{OUTPUT}")
-      at_exit { Proc.new{Process.kill(:TERM, @pid) if !@pid.nil?} }
+      at_exit do
+        Process.kill(:INT, @pid) if !@pid.nil?
+        FileUtils.remove_entry @work_dir if File.directory?(@work_dir)
+      end
     end
 
     def call(name, *args)
       #require 'byebug'
       #byebug
       if Helper.is_installed?(:julia)
-        File.write("#{@work_dir}/#{INPUT}", generate_entrypoint(@work_dir, "#{@work_dir}/#{OUTPUT}", name, *args))
+        enqueue @provider.generate_message("#{@work_dir}/#{INPUT}", name, *args)
       elsif Helper.is_installed?(:docker)
-        File.write("#{@work_dir}/#{INPUT}", generate_entrypoint("/opt/", "/opt/#{OUTPUT}", name, *args))
+        enqueue @provider.generate_message("/opt/#{INPUT}", name, *args)
       else
         raise Exception.new("Either julia or docker command is required to run virtual_module")
       end
       #byebug
-      response = File.open("#{@work_dir}/#{OUTPUT}", 'r'){|f| f.read}
+      response = dequeue
       begin
         MessagePack.unpack(response)
       rescue
@@ -219,31 +275,15 @@ EOS
     end
 
     def reset(source)
-      @lib_source = source
+      super
       restart_server_process
     end
 
     private
       def restart_server_process
         Process.kill(:KILL, @pid) if !@pid.nil?
-        File.write("#{@work_dir}/#{LIB_SCRIPT}", @lib_source)
-        File.write("#{@work_dir}/#{MAIN_LOOP}", <<EOS)
-using MsgPack
-while true
-  source = open( "#{@work_dir}/#{INPUT}", "r" ) do fp
-    readall(fp)
-  end
-  result = eval(parse(source))
-  open( "#{@work_dir}/#{OUTPUT}", "w" ) do fp
-    try
-      write(fp,pack(result))
-    catch
-      serialize(fp,result)
-    end
-  end
-end
-EOS
-
+        File.write("#{@work_dir}/#{LIB_SCRIPT}", @provider.lib_script)
+        File.write("#{@work_dir}/#{MAIN_LOOP}", @provider.main_loop("#{@work_dir}/#{INPUT}", "#{@work_dir}/#{OUTPUT}"))
         if Helper.is_installed?(:julia)
           command = "julia --depwarn=no -L #{@work_dir}/#{LIB_SCRIPT} #{@work_dir}/#{MAIN_LOOP}"
         elsif Helper.is_installed?(:docker)
@@ -251,36 +291,30 @@ EOS
         else
           raise Exception.new("Either julia or docker command is required to run virtual_module")
         end
-        @pid = Process.spawn(command, :err => :out,:out => "/dev/null")
+        @pid = Process.spawn(command, :err => :out,:out => "/dev/null") # , :pgroup => Process.pid)
+        Process.detach @pid
       end
 
-      def generate_entrypoint(basedir, target, name, *args)
-        script = ""
-        params = []
-        args.each_with_index do |arg, i|
-          type = arg.class == Module ? "serialized" : "msgpack"
-          File.write("#{basedir}/#{INPUT}.#{i}.#{type}", arg.class == Module ? arg.___get_serialized___ : MessagePack.pack(arg))
-          params << "params_#{i}"
-          val = arg.class == Module ? "deserialize(fp)" : "unpack(readall(fp))"
-          script += "#{params.last} =open( \"#{basedir}/#{INPUT}.#{i}.#{type}\", \"r\" ) do fp; #{val}; end;"
-        end
-        script += "#{name}(#{params.join(',')});"
-        #script + "open( \"#{target}\", \"w\" ) do fp; write( fp, try pack(result) catch; serialize(fp,result) end ); end"
+      def enqueue(message)
+        File.write("#{@work_dir}/#{INPUT}", message)
+      end
+
+      def dequeue
+        File.open("#{@work_dir}/#{OUTPUT}", 'r'){|f| f.read}
       end
   end
 
   class RpcIpcInterface < BaseIpcInterface
-    def initialize(config={})
+    def initialize(provider)
       super
       init_connection
-      props = {:server=>"127.0.0.1", :port=>8746, :timeout=>10}
-      props.each do |k,v|
-        instance_variable_set("@#{k}", config[k] || v)
-      end
+      @server = "127.0.0.1"
+      @port = 8746
+      @timeout = 10
     end
 
     def call(name, *args)
-      restart_server_process @lib_source
+      restart_server_process
       while `echo exit | telnet #{@server} #{@port} 2>&1`.chomp[-5,5]!="host." do
         sleep(0.05)
       end
@@ -289,36 +323,25 @@ EOS
       args.count>0 ? @client.call(name, *args) : @client.call(name)
     end
 
-    def reset(source)
-      @lib_source = source
-    end
-
     private
       def init_connection
         @pid = nil
         @client.close if !@client.nil?
         @client = nil
         at_exit do
-          Proc.new do
-            @client.close if !@client.nil?
-            Process.kill(:TERM, @pid) if !@pid.nil?
-          end
+          @client.close if !@client.nil?
+          Process.kill(:INT, @pid) if !@pid.nil?
+          FileUtils.remove_entry @work_dir if File.directory?(@work_dir)
         end
       end
 
-      def restart_server_process(source)
+      def restart_server_process
         Process.kill(:KILL, @pid) if !@pid.nil?
         `lsof -wni tcp:#{@port} | cut -f 4 -d ' ' | sed -ne '2,$p' | xargs kill -9`
         init_connection
-        compiled = <<EOS
-import MsgPackRpcServer
-module RemoteFunctions
-#{source}
-end
-MsgPackRpcServer.run(#{@port}, RemoteFunctions)
-EOS
-        File.write("#{@work_dir}/#{LIB_SCRIPT}", compiled)
-        @pid = Process.spawn("julia --depwarn=no #{@work_dir}/#{LIB_SCRIPT}")
+        File.write("#{@work_dir}/#{LIB_SCRIPT}", @provider.lib_script(:rpc))
+        @pid = Process.spawn("julia --depwarn=no #{@work_dir}/#{LIB_SCRIPT} #{@port}", :err => :out,:out => "/dev/null") #, :pgroup=>Process.pid)
+        Process.detach @pid
       end
   end
 
