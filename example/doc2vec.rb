@@ -1,5 +1,4 @@
 require 'natto'
-require 'sanitize'
 
 sentences={}
 natto = Natto::MeCab.new
@@ -24,4 +23,4 @@ class LabeledListSentence(object):
 
 EOS
 model = py.gensim.models.doc2vec.Doc2Vec(py.LabeledListSentence(sentences.values, sentences.keys), min_count:0)
-p model.docvecs.most_similar(["ps"])
+p model.docvecs.most_similar(["ps"]) # [["top", 0.5594387054443359], ["cat", 0.46929454803466797], ["df", 0.3900265693664551], ["mkdir", 0.38811227679252625], ["du", 0.23663029074668884], ["ls", 0.15436093509197235], ["cd", -0.1965409815311432], ["touch", -0.38958919048309326]]
