@@ -1,16 +1,15 @@
 require '../lib/virtual_module.rb'
 
-vm = VirtualModule.new(<<EOS)
+vm = VirtualModule.new(methods:<<EOS)
 def hi
   "ho"
 end
 
-# @param [Fixnum] num
 def hello(num)
   num*num
 end
 EOS
-p vm.hi #"ho"
+p vm.hi(:_) #"ho"
 include vm
 p hello(33) #1089
 p vm.zeros(2,2)
@@ -30,10 +29,10 @@ EOS
 p my_objects #[23, 9191, 67.03]
 p count_num #693889
 
-vm2 = VirtualModule.new(<<EOS, :ipc=>:rpc)
-def hey(x, y)
-  "yo" + (x*y).to_s
-end
-EOS
-p 1234
-p vm2.hey(2,7)
+#vm2 = VirtualModule.new(methods:<<EOS, ipc: :rpc)
+#def hey(x, y)
+#  "yo" + (x*y).to_s
+#end
+#EOS
+#p 1234
+#p vm2.hey(2,7)

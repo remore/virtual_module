@@ -109,7 +109,7 @@ if defined?(VirtualModule)
   __cum_table = FloatArray.new(__cum_table)
   syn1neg = FloatArray.new(syn1neg)
 
-  vm = VirtualModule.new(File.read(File.dirname(__FILE__)+"/calc.rb"))
+  vm = VirtualModule.new(methods:File.read(File.dirname(__FILE__)+"/calc.rb"))
   vm.virtual_module_eval("calc_vec(iter, original_text, sample, train_words, debug_mode, __vocab_index_hash, vocab, syn0, syn1neg, negative, alpha, __cum_table, table_size, layer1_size, window)")
 else
   require "#{File.dirname(__FILE__)}/calc.rb"
