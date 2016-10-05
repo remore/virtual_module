@@ -20,9 +20,9 @@ include skl
 iris = datasets.load_iris(:_)
 clf = grid_search.GridSearchCV(svm.LinearSVC(:_), {'C':[1, 3, 5],'loss':['hinge', 'squared_hinge']}, verbose:0)
 clf.fit(iris.data, iris.target)
-p "Best Parameters:", best_params = clf.best_params_
+p "Best Parameters: #{best_params = clf.best_params_}" #"Best Parameters: {\"loss\"=>\"squared_hinge\", \"C\"=>1}"
 score = cross_validation.cross_val_score(svm.LinearSVC(loss:'squared_hinge', C:1), iris.data, iris.target, cv:5)
-p "Scores: #{[:mean,:min,:max,:std].map{|e| e.to_s + '=' + score.send(e, :_).to_s }.join(',')}"
+p "Scores: #{[:mean,:min,:max,:std].map{|e| e.to_s + '=' + score.send(e, :_).to_s }.join(',')}" # "Scores: mean=0.9666666666666668,min=0.9,max=1.0,std=0.04216370213557838"
 
 # a sample svm usage, ported from following code
 # http://sucrose.hatenablog.com/entry/2013/05/25/133021

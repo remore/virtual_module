@@ -555,7 +555,7 @@ EOS
       end
       response = dequeue
       case response[0..5]
-      when "\xC1VMERR" then raise RuntimeException, "wrong wrong!: " + response[6..-1]
+      when "\xC1VMERR" then raise RuntimeException, "An error occurred while executing the command in #{@provider.lang} process: " + response[6..-1]
       when "\xC1VMOBJ" then raise StandardError.new(response)
       else
         begin
