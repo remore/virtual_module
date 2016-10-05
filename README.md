@@ -41,7 +41,7 @@ To write Ruby code using VirtualModule is something like to write Python code us
 
 ```
 require 'virtual_module'
-vm = VirtualModule.new(<<EOS)
+vm = VirtualModule.new(methods:<<EOS)
 def hi
   "yo"
 end
@@ -53,7 +53,7 @@ def init_table(list)
   list
 end
 EOS
-p vm.hi # "yo"
+p vm.hi(:_) # "yo"
 include vm
 p init_table([1,20]) # [1.3066601775641218, 20.17001189249985]
 ```
